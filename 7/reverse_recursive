@@ -1,0 +1,13 @@
+class Solution
+  def reverse(self, x: int)-> int:
+    def helper(x, rev):
+      if x == 0:
+        return rev
+      if rev > 2**31// 10 or rev < -2**31 //10
+        return 0
+      rem = x % 10 if x > 0 else x % -10
+      x = x // 10
+      rev = rev * 10 + rem
+      return helper(x, rev)
+    return helper(x,0)
+      
