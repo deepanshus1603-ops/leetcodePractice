@@ -1,174 +1,118 @@
 import bpy
-
-rig = bpy.data.objects.get("RIG-rain")
-
-if not rig:
-    raise RuntimeError("RIG-rain not found")
+import json
+import os
 
 
-# ============================================================
-# CONTROLS
-# ============================================================
+RIG_NAME = "RIG-rain"
 
-lip_l = rig.pose.bones.get("ACT-Lips_Corner.L")
-lip_r = rig.pose.bones.get("ACT-Lips_Corner.R")
+TARGET_CONTROLS = [
+    # Right arm - working wave
+    "FK-Upperarm_Parent.R",
+    "FK-Upperarm.R",
+    "FK-Forearm.R",
+    "FK-Hand.R",
 
-upper_l = rig.pose.bones.get("ACT-Eyelid_Upper.L")
-upper_r = rig.pose.bones.get("ACT-Eyelid_Upper.R")
+    # Left arm
+    "FK-Upperarm_Parent.L",
+    "FK-Upperarm.L",
+    "FK-Forearm.L",
+    "FK-Hand.L",
 
-lower_l = rig.pose.bones.get("ACT-Eyelid_Lower.L")
-lower_r = rig.pose.bones.get("ACT-Eyelid_Lower.R")
+    # Smile
+    "ACT-Lips_Corner.L",
+    "ACT-Lips_Corner.R",
+    "ACT-Cheek_Outer.L",
+    "ACT-Cheek_Outer.R",
 
-controls = [
-    lip_l, lip_r,
-    upper_l, upper_r,
-    lower_l, lower_r,
+    # Blink
+    "ACT-Eyelid_Upper.L",
+    "ACT-Eyelid_Upper.R",
+    "ACT-Eyelid_Lower.L",
+    "ACT-Eyelid_Lower.R",
 ]
 
-if any(b is None for b in controls):
-    raise RuntimeError("One or more face controls were not found")
+
+def vec(v):
+    return [round(float(x), 6) for x in v]
 
 
-# ============================================================
-# HELPERS
-# ============================================================
-
-def set_loc(bone, x=0.0, y=0.0, z=0.0):
-    bone.location = (x, y, z)
-
-
-def key_loc(bone, frame):
-    bone.keyframe_insert(
-        data_path="location",
-        frame=frame
-    )
+state = {
+    "blender_version": bpy.app.version_string,
+    "blend_file": bpy.data.filepath,
+    "frame_current": bpy.context.scene.frame_current,
+    "frame_start": bpy.context.scene.frame_start,
+    "frame_end": bpy.context.scene.frame_end,
+    "rig_name": RIG_NAME,
+    "rig_found": False,
+    "action": None,
+    "controls": {}
+}
 
 
-def key_all(frame):
-    for b in controls:
-        key_loc(b, frame)
+rig = bpy.data.objects.get(RIG_NAME)
+
+if rig is None:
+    state["error"] = f"Rig '{RIG_NAME}' was not found."
+
+else:
+    state["rig_found"] = True
+    state["rig_type"] = rig.type
+
+    if rig.animation_data and rig.animation_data.action:
+        state["action"] = rig.animation_data.action.name
+
+    for bone_name in TARGET_CONTROLS:
+
+        pb = rig.pose.bones.get(bone_name)
+
+        if pb is None:
+            state["controls"][bone_name] = {
+                "exists": False
+            }
+            continue
+
+        constraints = []
+
+        for c in pb.constraints:
+            item = {
+                "name": c.name,
+                "type": c.type,
+                "mute": bool(c.mute)
+            }
+
+            if hasattr(c, "influence"):
+                item["influence"] = round(float(c.influence), 4)
+
+            constraints.append(item)
+
+        state["controls"][bone_name] = {
+            "exists": True,
+            "location": vec(pb.location),
+            "rotation_mode": pb.rotation_mode,
+            "rotation_euler": vec(pb.rotation_euler),
+            "rotation_quaternion": vec(pb.rotation_quaternion),
+            "scale": vec(pb.scale),
+            "constraints": constraints
+        }
 
 
-def neutral():
-    for b in controls:
-        set_loc(b)
+output_file = os.path.join(
+    bpy.path.abspath("//"),
+    "scene_state.json"
+)
+
+with open(output_file, "w", encoding="utf-8") as f:
+    json.dump(state, f, indent=2)
 
 
-# ============================================================
-# FRAME 1 — NEUTRAL
-# ============================================================
-
-neutral()
-key_all(1)
-
-
-# ============================================================
-# FRAME 20 — NEUTRAL
-# ============================================================
-
-neutral()
-key_all(20)
-
-
-# ============================================================
-# FRAME 32 — SMILE TEST
-#
-# Left corner moves outward + upward
-# Right corner mirrors it
-# ============================================================
-
-set_loc(lip_l, x=0.025, z=0.035)
-set_loc(lip_r, x=-0.025, z=0.035)
-
-set_loc(upper_l)
-set_loc(upper_r)
-set_loc(lower_l)
-set_loc(lower_r)
-
-key_all(32)
-
-
-# Hold smile
-key_all(40)
-
-
-# ============================================================
-# FRAME 48 — BACK TO NEUTRAL FACE
-# ============================================================
-
-neutral()
-key_all(48)
-
-
-# ============================================================
-# FRAME 60 — BLINK TEST A
-#
-# Candidate direction:
-# upper lids move negative Y
-# lower lids move positive Y
-# ============================================================
-
-set_loc(lip_l)
-set_loc(lip_r)
-
-set_loc(upper_l, y=-0.038)
-set_loc(upper_r, y=-0.038)
-
-set_loc(lower_l, y=0.018)
-set_loc(lower_r, y=0.018)
-
-key_all(60)
-
-
-# ============================================================
-# FRAME 68 — NEUTRAL AGAIN
-# ============================================================
-
-neutral()
-key_all(68)
-
-
-# ============================================================
-# FRAME 80 — BLINK TEST B
-#
-# Exact opposite direction.
-# We test this in case CloudRig maps the control backwards.
-# ============================================================
-
-set_loc(lip_l)
-set_loc(lip_r)
-
-set_loc(upper_l, y=0.018)
-set_loc(upper_r, y=0.018)
-
-set_loc(lower_l, y=-0.018)
-set_loc(lower_r, y=-0.018)
-
-key_all(80)
-
-
-# ============================================================
-# FRAME 88 — NEUTRAL
-# ============================================================
-
-neutral()
-key_all(88)
-
-
-# ============================================================
-# END
-# ============================================================
-
-bpy.context.scene.frame_start = 1
-bpy.context.scene.frame_end = 96
-
-bpy.context.scene.frame_set(1)
-
-print("")
-print("========================================")
-print("RAIN FACE TEST V1 CREATED")
-print("")
-print("Frame 32 = smile test")
-print("Frame 60 = blink direction A")
-print("Frame 80 = blink direction B")
-print("========================================")
+print()
+print("============================================")
+print("RAIN_INSPECT_OK")
+print("============================================")
+print("Rig found:", state["rig_found"])
+print("Action:", state["action"])
+print("Frame:", state["frame_current"])
+print("Controls inspected:", len(state["controls"]))
+print("Output:", output_file)
+print("============================================")
+print()
