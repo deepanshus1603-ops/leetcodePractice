@@ -1,0 +1,298 @@
+import json
+import subprocess
+import urllib.request
+import tempfile
+import sys
+
+
+REPO = "deepanshus1603-ops/rain-animation-agent"
+MODEL = "qwen3.5:9b"
+OLLAMA_URL = "http://localhost:11434/api/generate"
+
+
+def run_gh(args):
+    result = subprocess.run(
+        ["gh"] + args,
+        capture_output=True,
+        text=True,
+        encoding="utf-8"
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip())
+
+    return result.stdout.strip()
+
+
+def get_open_tasks():
+    raw = run_gh([
+        "issue",
+        "list",
+        "--repo", REPO,
+        "--state", "open",
+        "--label", "rain-agent",
+        "--limit", "100",
+        "--json", "number,title,body,labels"
+    ])
+
+    return json.loads(raw)
+
+
+def is_processed(issue):
+    labels = issue.get("labels", [])
+
+    for label in labels:
+        if label.get("name") == "processed":
+            return True
+
+    return False
+
+
+def is_valid_rain_task(issue):
+    body = issue.get("body") or ""
+
+    return (
+        "RAIN_TASK" in body
+        and "END_RAIN_TASK" in body
+        and not is_processed(issue)
+    )
+
+
+def find_latest_task():
+    issues = get_open_tasks()
+
+    valid = [
+        issue
+        for issue in issues
+        if is_valid_rain_task(issue)
+    ]
+
+    if not valid:
+        return None
+
+    valid.sort(
+        key=lambda x: x["number"],
+        reverse=True
+    )
+
+    return valid[0]
+
+
+def ollama_generate(task_body):
+    prompt = f"""
+You are Rain Animator running in READ-ONLY planning mode.
+
+You are receiving an animation task from GitHub.
+
+IMPORTANT RULES:
+
+- Do NOT execute anything.
+- Do NOT modify Blender.
+- Do NOT generate destructive commands.
+- Analyze the task only.
+- Preserve existing successful animation.
+- Never recommend rig.animation_data_clear().
+- Return a concise execution plan.
+- Identify which Blender controls would eventually need modification.
+- Identify anything that must remain untouched.
+
+TASK FROM GITHUB:
+
+{task_body}
+
+Return your answer using this structure:
+
+TASK UNDERSTANDING:
+...
+
+CONTROLS THAT MAY NEED MODIFICATION:
+...
+
+CONTROLS / ANIMATION TO PRESERVE:
+...
+
+PROPOSED STEPS:
+1.
+2.
+3.
+
+SAFETY CHECK:
+...
+"""
+
+    payload = {
+        "model": MODEL,
+        "prompt": prompt,
+        "stream": False
+    }
+
+    data = json.dumps(payload).encode("utf-8")
+
+    request = urllib.request.Request(
+        OLLAMA_URL,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
+
+    with urllib.request.urlopen(
+        request,
+        timeout=600
+    ) as response:
+        result = json.loads(
+            response.read().decode("utf-8")
+        )
+
+    return result.get("response", "").strip()
+
+
+def ensure_labels():
+    labels = [
+        ("running", "FBCA04"),
+        ("processed", "0E8A16"),
+        ("failed", "D93F0B")
+    ]
+
+    for name, color in labels:
+        subprocess.run(
+            [
+                "gh", "label", "create", name,
+                "--repo", REPO,
+                "--color", color,
+                "--force"
+            ],
+            capture_output=True,
+            text=True
+        )
+
+
+def add_label(issue_number, label):
+    run_gh([
+        "issue",
+        "edit",
+        str(issue_number),
+        "--repo", REPO,
+        "--add-label", label
+    ])
+
+
+def remove_label(issue_number, label):
+    subprocess.run(
+        [
+            "gh",
+            "issue",
+            "edit",
+            str(issue_number),
+            "--repo", REPO,
+            "--remove-label", label
+        ],
+        capture_output=True,
+        text=True
+    )
+
+
+def post_comment(issue_number, text):
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".txt",
+        delete=False,
+        encoding="utf-8"
+    ) as file:
+        file.write(text)
+        filename = file.name
+
+    run_gh([
+        "issue",
+        "comment",
+        str(issue_number),
+        "--repo", REPO,
+        "--body-file", filename
+    ])
+
+
+def main():
+    print()
+    print("====================================")
+    print("RAIN WORKER - READ ONLY")
+    print("====================================")
+
+    ensure_labels()
+
+    task = find_latest_task()
+
+    if task is None:
+        print("No unprocessed Rain tasks found.")
+        return
+
+    number = task["number"]
+    title = task["title"]
+    body = task["body"]
+
+    print(f"Found issue #{number}")
+    print(f"Title: {title}")
+    print()
+
+    # Extra protection during first test
+    if "READ_ONLY" not in body:
+        print("STOPPED.")
+        print("Task does not contain READ_ONLY.")
+        print("Nothing was executed.")
+        return
+
+    add_label(number, "running")
+
+    try:
+        print("Sending task to Ollama...")
+        print(f"Model: {MODEL}")
+        print()
+
+        response = ollama_generate(body)
+
+        if not response:
+            raise RuntimeError(
+                "Ollama returned an empty response."
+            )
+
+        print("OLLAMA RESPONSE")
+        print("------------------------------------")
+        print(response)
+        print("------------------------------------")
+
+        github_comment = f"""## Rain Agent - READ ONLY Analysis
+
+Model: `{MODEL}`
+
+No Blender changes were performed.
+
+{response}
+
+---
+Status: READ_ONLY analysis completed successfully.
+"""
+
+        post_comment(number, github_comment)
+
+        add_label(number, "processed")
+        remove_label(number, "running")
+
+        print()
+        print("====================================")
+        print("RAIN_WORKER_OK")
+        print(f"Issue #{number} analyzed.")
+        print("Analysis posted back to GitHub.")
+        print("Blender was NOT modified.")
+        print("====================================")
+
+    except Exception as error:
+        remove_label(number, "running")
+        add_label(number, "failed")
+
+        print()
+        print("RAIN_WORKER_FAILED")
+        print(error)
+
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
