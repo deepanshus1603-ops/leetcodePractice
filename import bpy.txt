@@ -1,0 +1,174 @@
+import bpy
+
+rig = bpy.data.objects.get("RIG-rain")
+
+if not rig:
+    raise RuntimeError("RIG-rain not found")
+
+
+# ============================================================
+# CONTROLS
+# ============================================================
+
+lip_l = rig.pose.bones.get("ACT-Lips_Corner.L")
+lip_r = rig.pose.bones.get("ACT-Lips_Corner.R")
+
+upper_l = rig.pose.bones.get("ACT-Eyelid_Upper.L")
+upper_r = rig.pose.bones.get("ACT-Eyelid_Upper.R")
+
+lower_l = rig.pose.bones.get("ACT-Eyelid_Lower.L")
+lower_r = rig.pose.bones.get("ACT-Eyelid_Lower.R")
+
+controls = [
+    lip_l, lip_r,
+    upper_l, upper_r,
+    lower_l, lower_r,
+]
+
+if any(b is None for b in controls):
+    raise RuntimeError("One or more face controls were not found")
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def set_loc(bone, x=0.0, y=0.0, z=0.0):
+    bone.location = (x, y, z)
+
+
+def key_loc(bone, frame):
+    bone.keyframe_insert(
+        data_path="location",
+        frame=frame
+    )
+
+
+def key_all(frame):
+    for b in controls:
+        key_loc(b, frame)
+
+
+def neutral():
+    for b in controls:
+        set_loc(b)
+
+
+# ============================================================
+# FRAME 1 — NEUTRAL
+# ============================================================
+
+neutral()
+key_all(1)
+
+
+# ============================================================
+# FRAME 20 — NEUTRAL
+# ============================================================
+
+neutral()
+key_all(20)
+
+
+# ============================================================
+# FRAME 32 — SMILE TEST
+#
+# Left corner moves outward + upward
+# Right corner mirrors it
+# ============================================================
+
+set_loc(lip_l, x=0.025, z=0.035)
+set_loc(lip_r, x=-0.025, z=0.035)
+
+set_loc(upper_l)
+set_loc(upper_r)
+set_loc(lower_l)
+set_loc(lower_r)
+
+key_all(32)
+
+
+# Hold smile
+key_all(40)
+
+
+# ============================================================
+# FRAME 48 — BACK TO NEUTRAL FACE
+# ============================================================
+
+neutral()
+key_all(48)
+
+
+# ============================================================
+# FRAME 60 — BLINK TEST A
+#
+# Candidate direction:
+# upper lids move negative Y
+# lower lids move positive Y
+# ============================================================
+
+set_loc(lip_l)
+set_loc(lip_r)
+
+set_loc(upper_l, y=-0.038)
+set_loc(upper_r, y=-0.038)
+
+set_loc(lower_l, y=0.018)
+set_loc(lower_r, y=0.018)
+
+key_all(60)
+
+
+# ============================================================
+# FRAME 68 — NEUTRAL AGAIN
+# ============================================================
+
+neutral()
+key_all(68)
+
+
+# ============================================================
+# FRAME 80 — BLINK TEST B
+#
+# Exact opposite direction.
+# We test this in case CloudRig maps the control backwards.
+# ============================================================
+
+set_loc(lip_l)
+set_loc(lip_r)
+
+set_loc(upper_l, y=0.018)
+set_loc(upper_r, y=0.018)
+
+set_loc(lower_l, y=-0.018)
+set_loc(lower_r, y=-0.018)
+
+key_all(80)
+
+
+# ============================================================
+# FRAME 88 — NEUTRAL
+# ============================================================
+
+neutral()
+key_all(88)
+
+
+# ============================================================
+# END
+# ============================================================
+
+bpy.context.scene.frame_start = 1
+bpy.context.scene.frame_end = 96
+
+bpy.context.scene.frame_set(1)
+
+print("")
+print("========================================")
+print("RAIN FACE TEST V1 CREATED")
+print("")
+print("Frame 32 = smile test")
+print("Frame 60 = blink direction A")
+print("Frame 80 = blink direction B")
+print("========================================")
